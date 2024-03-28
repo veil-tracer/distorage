@@ -168,9 +168,10 @@ func TestConsistency(t *testing.T) {
 func BenchmarkGet400(b *testing.B)     { benchmarkGet(b, 8, 5, false) }
 func BenchmarkGet25K(b *testing.B)     { benchmarkGet(b, 512, 5, false) }
 func BenchmarkGet50K(b *testing.B)     { benchmarkGet(b, 1024, 5, false) }
-func BenchmarkGet204K(b *testing.B)    { benchmarkGet(b, 4096, 2, false) }
+func BenchmarkGet204K(b *testing.B)    { benchmarkGet(b, 4096, 10, false) }
 func BenchmarkGet10M(b *testing.B)     { benchmarkGet(b, 200000, 5, false) }
 func BenchmarkAdd25k(b *testing.B)     { benchmarkAdd(b, 100, 100, false) }
+func BenchmarkReBalance(b *testing.B)  { benchmarkAddRemove(b, 100, 100, true) }
 func BenchmarkAddBulk25k(b *testing.B) { benchmarkBulkAdd(b, 100, 5, false) }
 func BenchmarkRemove6k(b *testing.B)   { benchmarkRemove(b, 128, 5, false) }
 
@@ -216,6 +217,21 @@ func benchmarkAdd(b *testing.B, shards, blockPartitionDivision int, showMetrics 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		hash.Add(buckets[i])
+	}
+}
+
+func benchmarkAddRemove(b *testing.B, shards, blockPartitionDivision int, showMetrics bool) {
+	hash := New(makeOptions(50*uint(shards), blockPartitionDivision, showMetrics)...)
+	var buckets [][]byte
+	for i := 0; i < b.N; i++ {
+		buckets = append(buckets, []byte(fmt.Sprintf("%d", i)))
+	}
+	for i := 0; i < b.N; i++ {
+		hash.Add(buckets[i])
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hash.Remove(buckets[i])
 	}
 }
 
@@ -280,12 +296,12 @@ func makeOptions(replica uint, partitioning int, metrics bool) []Option {
 			switch e {
 			case EventFullRingLookup:
 				fmt.Printf("Full ring: %x - block: %d\n", data...)
-			case EventMissedLookupBlock:
+			case EventMissedLookup:
 				fmt.Printf("Missed: %x - block: %d - count: %d\n", data...)
 			case EventReBalance:
 				fmt.Printf("Rebalance: totalBlocks: %d, expectedBlocks: %d, blockSize: %d, totalKeys: %d\n", data...)
 			}
-		}, EventFullRingLookup, EventMissedLookupBlock, EventReBalance))
+		}, EventFullRingLookup, EventMissedLookup, EventReBalance))
 	}
 	return opts
 }

@@ -1,4 +1,4 @@
-// Package consistenthash provides an implementation of a ring hash.
+// Package distorage provides an implementation of a ring hash.
 package distorage
 
 import (
@@ -41,7 +41,6 @@ func New(opts ...Option) *ConsistentHash {
 	ch := &ConsistentHash{
 		replicas:   o.defaultReplicas,
 		hash:       o.hashFunc,
-		pool:       sync.Pool{New: func() any { return make(map[uint32][]node, o.defaultReplicas) }},
 		hashMap:    make(map[uint32][]byte, 0),
 		replicaMap: make(map[uint32]uint, 0),
 		listeners:  o.listeners,
@@ -61,6 +60,7 @@ func New(opts ...Option) *ConsistentHash {
 
 	ch.blockPartitioning = uint32(o.blockPartitioning)
 	ch.blockMap = make(map[uint32][]node, ch.blockPartitioning)
+	ch.pool = sync.Pool{New: func() any { return make(map[uint32][]node, o.blockPartitioning) }}
 	ch.totalBlocks = 1
 
 	return ch
@@ -121,8 +121,6 @@ func (ch *ConsistentHash) Remove(key []byte) bool {
 	originalHash := ch.hash(key)
 
 	ch.mu.Lock()
-	defer ch.mu.Unlock()
-
 	replicas, found := ch.replicaMap[originalHash]
 	if !found {
 		// if not found, means using the default number
@@ -145,7 +143,12 @@ func (ch *ConsistentHash) Remove(key []byte) bool {
 	if found {
 		delete(ch.replicaMap, originalHash) // delete replica numbers
 	}
+	ch.mu.Unlock()
 
+	expectedBlocks := ch.totalKeys / ch.blockPartitioning
+	if expectedBlocks > 0 {
+		ch.balanceBlocks(expectedBlocks)
+	}
 	return true
 }
 
@@ -220,7 +223,7 @@ func (ch *ConsistentHash) addNode(n node) {
 // balanceBlocks checks all the keys in each block and shifts to the next block if the number of blocks needs to be changed
 func (ch *ConsistentHash) balanceBlocks(expectedBlocks uint32) {
 	// re-balance the blocks if expectedBlocks needs twice size as it's current size
-	if (expectedBlocks >> 1) > ch.totalBlocks {
+	if (expectedBlocks>>1) > ch.totalBlocks || expectedBlocks < (ch.totalBlocks>>1) {
 		blockSize := math.MaxUint32 / expectedBlocks
 		ch.trigger(EventReBalance, ch.totalBlocks, expectedBlocks, blockSize, ch.totalKeys)
 		newBlockMap := ch.pool.Get().(map[uint32][]node)
@@ -244,8 +247,6 @@ func (ch *ConsistentHash) balanceBlocks(expectedBlocks uint32) {
 		ch.totalBlocks = expectedBlocks
 		ch.mu.Unlock()
 		ch.pool.Put(newBlockMap)
-	} else if expectedBlocks < (ch.totalBlocks >> 1) {
-		// TODO decrease number of blocks to avoid missed blocks
 	}
 
 	if ch.totalBlocks < 1 {
@@ -289,7 +290,7 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 		if !ok {
 			blockNumber++
 			i++
-			ch.trigger(EventMissedLookupBlock, hash, blockNumber, i)
+			ch.trigger(EventMissedLookup, hash, blockNumber, i)
 			continue
 		}
 		// binary search inside the block
@@ -306,7 +307,7 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 				fullCircle = true
 			}
 			i++
-			ch.trigger(EventMissedLookupBlock, hash, blockNumber, i)
+			ch.trigger(EventMissedLookup, hash, blockNumber, i)
 			blockNumber++
 			continue
 		}
@@ -326,7 +327,7 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 				return ch.hashMap[firstKey], blockNumber
 			}
 			j++
-			ch.trigger(EventMissedLookupBlock, hash, blockNumber, j)
+			ch.trigger(EventMissedLookup, hash, blockNumber, j)
 		}
 	}
 	return nil, blockNumber

@@ -1,12 +1,12 @@
 package distorage
 
-type Event int
+type Event uint8
 
 type EventListener func(e Event, data ...any)
 
 const (
 	EventReBalance Event = 1 << iota
-	EventMissedLookupBlock
+	EventMissedLookup
 	EventFullRingLookup
 )
 
