@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -164,6 +165,7 @@ func TestConsistency(t *testing.T) {
 	}
 
 }
+func BenchmarkConcurrent(b *testing.B) { benchmarkConcurrent(b, 10000, 5, false) }
 
 func BenchmarkGet400(b *testing.B)     { benchmarkGet(b, 8, 5, false) }
 func BenchmarkGet25K(b *testing.B)     { benchmarkGet(b, 512, 5, false) }
@@ -171,7 +173,6 @@ func BenchmarkGet50K(b *testing.B)     { benchmarkGet(b, 1024, 5, false) }
 func BenchmarkGet204K(b *testing.B)    { benchmarkGet(b, 4096, 10, false) }
 func BenchmarkGet10M(b *testing.B)     { benchmarkGet(b, 200000, 5, false) }
 func BenchmarkAdd25k(b *testing.B)     { benchmarkAdd(b, 100, 100, false) }
-func BenchmarkReBalance(b *testing.B)  { benchmarkAddRemove(b, 100, 100, true) }
 func BenchmarkAddBulk25k(b *testing.B) { benchmarkBulkAdd(b, 100, 5, false) }
 func BenchmarkRemove6k(b *testing.B)   { benchmarkRemove(b, 128, 5, false) }
 
@@ -220,19 +221,39 @@ func benchmarkAdd(b *testing.B, shards, blockPartitionDivision int, showMetrics 
 	}
 }
 
-func benchmarkAddRemove(b *testing.B, shards, blockPartitionDivision int, showMetrics bool) {
-	hash := New(makeOptions(50*uint(shards), blockPartitionDivision, showMetrics)...)
+func benchmarkConcurrent(b *testing.B, shards, blockPartitionDivision int, showMetrics bool) {
+	hash := New(makeOptions(50, blockPartitionDivision, showMetrics)...)
+	var lookups [][]byte
 	var buckets [][]byte
-	for i := 0; i < b.N; i++ {
+	for i := 0; i <= shards; i++ {
+		var str bytes.Buffer
 		buckets = append(buckets, []byte(fmt.Sprintf("%d", i)))
+		str.WriteString(fmt.Sprintf("shard-x-%d", i))
+		lookups = append(lookups, str.Bytes())
 	}
-	for i := 0; i < b.N; i++ {
-		hash.Add(buckets[i])
-	}
+
+	var wg sync.WaitGroup
+	wg.Add(3)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		hash.Remove(buckets[i])
-	}
+	go func() {
+		for i := 0; i < b.N; i++ {
+			hash.Add(buckets[rand.Intn(shards-1)])
+		}
+		wg.Done()
+	}()
+	go func() {
+		for i := 0; i < b.N; i++ {
+			hash.Remove(buckets[rand.Intn(shards-1)])
+		}
+		wg.Done()
+	}()
+	go func() {
+		for i := 0; i < b.N; i++ {
+			hash.Get(lookups[rand.Intn(shards-1)])
+		}
+		wg.Done()
+	}()
+	wg.Wait()
 }
 
 func benchmarkRemove(b *testing.B, shards int, blockPartitionDivision int, showMetrics bool) {
@@ -269,39 +290,10 @@ func benchmarkGet(b *testing.B, shards int, blockPartitionDivision int, showMetr
 	})
 }
 
-func benchmarkAddGet(b *testing.B, shards int, blockPartitionDivision int, showMetrics bool) {
-	hash := New(makeOptions(50, blockPartitionDivision, showMetrics)...)
-	var lookups [][]byte
-	var buckets [][]byte
-	for i := 0; i <= shards*50; i++ {
-		var str bytes.Buffer
-		buckets = append(buckets, []byte(fmt.Sprintf("%d", i)))
-		str.WriteString(fmt.Sprintf("shard-x-%d", i))
-		lookups = append(lookups, str.Bytes())
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		hash.Add(buckets[rand.Intn(shards*50-1)])
-		hash.Get(lookups[rand.Intn(shards*50-1)])
-	}
-}
-
 func makeOptions(replica uint, partitioning int, metrics bool) []Option {
 	opts := []Option{
 		WithDefaultReplicas(replica),
 		WithBlockPartitioning(partitioning),
-	}
-	if metrics {
-		opts = append(opts, WithListener(func(e Event, data ...any) {
-			switch e {
-			case EventFullRingLookup:
-				fmt.Printf("Full ring: %x - block: %d\n", data...)
-			case EventMissedLookup:
-				fmt.Printf("Missed: %x - block: %d - count: %d\n", data...)
-			case EventReBalance:
-				fmt.Printf("Rebalance: totalBlocks: %d, expectedBlocks: %d, blockSize: %d, totalKeys: %d\n", data...)
-			}
-		}, EventFullRingLookup, EventMissedLookup, EventReBalance))
 	}
 	return opts
 }

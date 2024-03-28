@@ -120,30 +120,41 @@ func (ch *ConsistentHash) Remove(key []byte) bool {
 
 	originalHash := ch.hash(key)
 
-	ch.mu.Lock()
+	ch.mu.RLock()
+	if _, ok := ch.hashMap[originalHash]; !ok {
+		ch.mu.RUnlock()
+		return false
+	}
+
 	replicas, found := ch.replicaMap[originalHash]
 	if !found {
 		// if not found, means using the default number
 		replicas = ch.replicas
 	}
+	ch.mu.RUnlock()
 
-	// remove original one
-	ch.removeFromBlock(originalHash, originalHash)
+	nodes := make([]node, replicas, replicas) // todo avoid overflow
 
+	nodes[0] = node{originalHash, originalHash}
 	var hash uint32
 	var i uint32
-	// remove replicas
+
 	for i = 1; i < uint32(replicas); i++ {
 		var b bytes.Buffer
 		b.Write(key)
 		b.Write([]byte{byte(i), byte(i >> 8), byte(i >> 16), byte(i >> 24)})
 		hash = ch.hash(b.Bytes())
-		ch.removeFromBlock(hash, originalHash)
+		nodes[i] = node{hash, originalHash}
 	}
+
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	if found {
 		delete(ch.replicaMap, originalHash) // delete replica numbers
 	}
-	ch.mu.Unlock()
+	for _, n := range nodes {
+		ch.removeFromBlock(n.key, n.pointer)
+	}
 
 	expectedBlocks := ch.totalKeys / ch.blockPartitioning
 	if expectedBlocks > 0 {
@@ -188,9 +199,9 @@ func (ch *ConsistentHash) add(replicas uint, keys ...[]byte) {
 
 func (ch *ConsistentHash) addNodes(nodes []node) {
 	expectedBlocks := (ch.totalKeys + uint32(len(nodes))) / ch.blockPartitioning
-	ch.balanceBlocks(expectedBlocks)
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
+	ch.balanceBlocks(expectedBlocks)
 	for i := range nodes {
 		ch.addNode(nodes[i])
 	}
@@ -222,30 +233,41 @@ func (ch *ConsistentHash) addNode(n node) {
 
 // balanceBlocks checks all the keys in each block and shifts to the next block if the number of blocks needs to be changed
 func (ch *ConsistentHash) balanceBlocks(expectedBlocks uint32) {
+	if expectedBlocks < 1 {
+		return
+	}
 	// re-balance the blocks if expectedBlocks needs twice size as it's current size
 	if (expectedBlocks>>1) > ch.totalBlocks || expectedBlocks < (ch.totalBlocks>>1) {
 		blockSize := math.MaxUint32 / expectedBlocks
-		ch.trigger(EventReBalance, ch.totalBlocks, expectedBlocks, blockSize, ch.totalKeys)
 		newBlockMap := ch.pool.Get().(map[uint32][]node)
 		for blockNumber := ch.totalBlocks; blockNumber >= 0; blockNumber-- {
-			ch.mu.RLock()
 			nodes := ch.blockMap[blockNumber]
-			ch.mu.RUnlock()
-			for i := len(nodes) - 1; i >= 0; i-- {
-				if nodes[i].key/blockSize == blockNumber {
+			var j int
+			for i := len(nodes) - 1; i > 0; i-- {
+				targetBlock := nodes[i].key / blockSize
+				if targetBlock == blockNumber {
 					newBlockMap[blockNumber] = nodes[:i]
 					break
 				}
-				newBlockMap[nodes[i].key/blockSize] = append(newBlockMap[nodes[i].key/blockSize], nodes[i])
+				for j = i; j > 0; j-- {
+					if nodes[j].key/blockSize != targetBlock {
+						break
+					}
+				}
+				// shift and prepend nodes to the target block
+				newBlockMap[targetBlock] = append(newBlockMap[targetBlock], make([]node, i-j)...)
+				copy(newBlockMap[targetBlock][i-j:], newBlockMap[targetBlock])
+				copy(newBlockMap[targetBlock][:i-j], nodes[j:i-1])
+				// newBlockMap[targetBlock] = append(nodes[j:i-1], newBlockMap[targetBlock]...)
+
+				i = j
 			}
 			if blockNumber == 0 {
 				break
 			}
 		}
-		ch.mu.Lock()
 		ch.blockMap = newBlockMap
 		ch.totalBlocks = expectedBlocks
-		ch.mu.Unlock()
 		ch.pool.Put(newBlockMap)
 	}
 
@@ -258,19 +280,23 @@ func (ch *ConsistentHash) balanceBlocks(expectedBlocks uint32) {
 func (ch *ConsistentHash) removeFromBlock(hash, originalHash uint32) {
 	blockSize := math.MaxUint32 / ch.totalBlocks
 	blockNumber := hash / blockSize
-	_, ok := ch.blockMap[blockNumber]
+	nodes, ok := ch.blockMap[blockNumber]
 	if !ok {
 		return
 	}
 
 	// TODO efficient way would be to use ch.lookup(hash uint32)
-	for i := range ch.blockMap[blockNumber] {
-		if ch.blockMap[blockNumber][i].key == hash {
-			ch.blockMap[blockNumber] = append(ch.blockMap[blockNumber][:i], ch.blockMap[blockNumber][i+1:]...) // remove item
-			ch.totalKeys--
-			break
-		}
+	ln := len(nodes)
+	idx := sort.Search(ln, func(i int) bool {
+		return nodes[i].key >= hash
+	})
+	if idx == ln {
+		ch.blockMap[blockNumber] = ch.blockMap[blockNumber][:idx]
+	} else {
+		ch.blockMap[blockNumber] = append(ch.blockMap[blockNumber][:idx], ch.blockMap[blockNumber][idx+1:]...) // remove item
 	}
+	ch.totalKeys--
+
 	if originalHash == hash {
 		delete(ch.hashMap, originalHash)
 	}
@@ -283,14 +309,12 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 	// binary search for appropriate replica
 	blockSize := math.MaxUint32 / ch.totalBlocks
 	blockNumber := hash / blockSize
-	var idx, i int
+	var idx int
 	var fullCircle bool
 	for blockNumber < ch.totalBlocks {
 		nodes, ok := ch.blockMap[blockNumber]
 		if !ok {
 			blockNumber++
-			i++
-			ch.trigger(EventMissedLookup, hash, blockNumber, i)
 			continue
 		}
 		// binary search inside the block
@@ -302,12 +326,9 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 		if idx == len(nodes) {
 			if blockNumber == ch.totalBlocks-1 && !fullCircle {
 				// go to the first block
-				ch.trigger(EventFullRingLookup, hash, blockNumber)
 				blockNumber = 0
 				fullCircle = true
 			}
-			i++
-			ch.trigger(EventMissedLookup, hash, blockNumber, i)
 			blockNumber++
 			continue
 		}
@@ -318,7 +339,6 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 
 	// if we reach the last block, we need to find the first block that has an item
 	if blockNumber == ch.totalBlocks {
-		ch.trigger(EventFullRingLookup, hash, blockNumber)
 		var j uint32
 		for j < uint32(len(ch.blockMap)) {
 			if len(ch.blockMap[j]) > 0 {
@@ -327,7 +347,6 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 				return ch.hashMap[firstKey], blockNumber
 			}
 			j++
-			ch.trigger(EventMissedLookup, hash, blockNumber, j)
 		}
 	}
 	return nil, blockNumber
