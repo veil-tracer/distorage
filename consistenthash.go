@@ -21,6 +21,7 @@ type node struct {
 type ConsistentHash struct {
 	mu                sync.RWMutex
 	hash              HashFunc
+	pool              sync.Pool
 	replicas          uint              // default number of replicas in hash ring (higher number means more possibility for balance equality)
 	hashMap           map[uint32][]byte // Hash table key value pair (hash(x): x) * replicas (nodes)
 	replicaMap        map[uint32]uint   // Number of replicas per stored key
@@ -40,6 +41,7 @@ func New(opts ...Option) *ConsistentHash {
 	ch := &ConsistentHash{
 		replicas:   o.defaultReplicas,
 		hash:       o.hashFunc,
+		pool:       sync.Pool{New: func() any { return make(map[uint32][]node, o.defaultReplicas) }},
 		hashMap:    make(map[uint32][]byte, 0),
 		replicaMap: make(map[uint32]uint, 0),
 		listeners:  o.listeners,
@@ -71,8 +73,6 @@ func (ch *ConsistentHash) IsEmpty() bool {
 
 // Add adds some keys to the hash
 func (ch *ConsistentHash) Add(keys ...[]byte) {
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
 	ch.add(ch.replicas, keys...)
 }
 
@@ -81,8 +81,6 @@ func (ch *ConsistentHash) AddReplicas(replicas uint, keys ...[]byte) {
 	if replicas < 1 {
 		return
 	}
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
 	ch.add(replicas, keys...)
 }
 
@@ -160,7 +158,9 @@ func (ch *ConsistentHash) add(replicas uint, keys ...[]byte) {
 	for idx := range keys {
 		originalHash := ch.hash(keys[idx])
 		// no need for extra capacity, just get the bytes we need
+		ch.mu.Lock()
 		ch.hashMap[originalHash] = keys[idx][:len(keys[idx]):len(keys[idx])]
+		ch.mu.Unlock()
 		nodes = append(nodes, node{originalHash, originalHash})
 		for i = 1; i < uint32(replicas); i++ {
 			h.Write(keys[idx])
@@ -175,19 +175,19 @@ func (ch *ConsistentHash) add(replicas uint, keys ...[]byte) {
 
 		// do not store number of replicas if uses default number
 		if replicas != ch.replicas {
+			ch.mu.Lock()
 			ch.replicaMap[hash] = replicas
+			ch.mu.Unlock()
 		}
 	}
 	ch.addNodes(nodes)
 }
 
 func (ch *ConsistentHash) addNodes(nodes []node) {
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].key < nodes[j].key
-	})
-
 	expectedBlocks := (ch.totalKeys + uint32(len(nodes))) / ch.blockPartitioning
 	ch.balanceBlocks(expectedBlocks)
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	for i := range nodes {
 		ch.addNode(nodes[i])
 	}
@@ -211,10 +211,9 @@ func (ch *ConsistentHash) addNode(n node) {
 		return
 	}
 
-	ch.blockMap[blockNumber] = append(
-		ch.blockMap[blockNumber][:idx],
-		append([]node{n}, ch.blockMap[blockNumber][idx:]...)...,
-	)
+	ch.blockMap[blockNumber] = append(ch.blockMap[blockNumber], node{})
+	copy(ch.blockMap[blockNumber][idx+1:], ch.blockMap[blockNumber][idx:])
+	ch.blockMap[blockNumber][idx] = n
 	ch.totalKeys++
 }
 
@@ -224,35 +223,27 @@ func (ch *ConsistentHash) balanceBlocks(expectedBlocks uint32) {
 	if (expectedBlocks >> 1) > ch.totalBlocks {
 		blockSize := math.MaxUint32 / expectedBlocks
 		ch.trigger(EventReBalance, ch.totalBlocks, expectedBlocks, blockSize, ch.totalKeys)
-		for blockNumber := uint32(0); blockNumber < expectedBlocks-1; blockNumber++ {
+		newBlockMap := ch.pool.Get().(map[uint32][]node)
+		for blockNumber := ch.totalBlocks; blockNumber >= 0; blockNumber-- {
+			ch.mu.RLock()
 			nodes := ch.blockMap[blockNumber]
-			targetBlock := blockNumber
-			var j int
-			for i := 0; i < len(nodes); i++ {
-				// the first item not in the block, so the next items will not be in the block as well
-				if nodes[i].key/blockSize == targetBlock {
-					continue
+			ch.mu.RUnlock()
+			for i := len(nodes) - 1; i >= 0; i-- {
+				if nodes[i].key/blockSize == blockNumber {
+					newBlockMap[blockNumber] = nodes[:i]
+					break
 				}
-				if targetBlock == blockNumber {
-					// update current block items
-					ch.blockMap[blockNumber] = nodes[:i][:i:i]
-				}
-
-				targetBlock++
-				for j = i; j < len(nodes); j++ {
-					if nodes[j].key/blockSize != targetBlock {
-						break
-					}
-				}
-				if i != j {
-					ch.trigger(EventReBalanceShift, blockNumber, targetBlock, i, j, len(ch.blockMap[targetBlock]))
-					ch.blockMap[targetBlock] = append(nodes[i:j], ch.blockMap[targetBlock]...)
-					i = j
-				}
+				newBlockMap[nodes[i].key/blockSize] = append(newBlockMap[nodes[i].key/blockSize], nodes[i])
+			}
+			if blockNumber == 0 {
+				break
 			}
 		}
-
+		ch.mu.Lock()
+		ch.blockMap = newBlockMap
 		ch.totalBlocks = expectedBlocks
+		ch.mu.Unlock()
+		ch.pool.Put(newBlockMap)
 	} else if expectedBlocks < (ch.totalBlocks >> 1) {
 		// TODO decrease number of blocks to avoid missed blocks
 	}
@@ -297,8 +288,8 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 		nodes, ok := ch.blockMap[blockNumber]
 		if !ok {
 			blockNumber++
-			ch.trigger(EventMissedLookupBlock, hash, i)
 			i++
+			ch.trigger(EventMissedLookupBlock, hash, blockNumber, i)
 			continue
 		}
 		// binary search inside the block
@@ -314,6 +305,8 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 				blockNumber = 0
 				fullCircle = true
 			}
+			i++
+			ch.trigger(EventMissedLookupBlock, hash, blockNumber, i)
 			blockNumber++
 			continue
 		}
@@ -332,8 +325,8 @@ func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 				firstKey := ch.blockMap[0][0].pointer
 				return ch.hashMap[firstKey], blockNumber
 			}
-			ch.trigger(EventMissedLookupBlock, hash, j)
 			j++
+			ch.trigger(EventMissedLookupBlock, hash, blockNumber, j)
 		}
 	}
 	return nil, blockNumber

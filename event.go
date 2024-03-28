@@ -6,7 +6,6 @@ type EventListener func(e Event, data ...any)
 
 const (
 	EventReBalance Event = 1 << iota
-	EventReBalanceShift
 	EventMissedLookupBlock
 	EventFullRingLookup
 )

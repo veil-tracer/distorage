@@ -123,7 +123,7 @@ func TestReplication(t *testing.T) {
 
 	for k, v := range testCases {
 		if hash.GetString(k) != v {
-			t.Errorf("Asking for %s, should have yielded %s", k, v)
+			t.Errorf("Asking for %s, should have yielded %s got %s", k, v, hash.GetString(k))
 		}
 	}
 }
@@ -165,13 +165,13 @@ func TestConsistency(t *testing.T) {
 
 }
 
-func BenchmarkGet400(b *testing.B)     { benchmarkGet(b, 8, 5, true) }
+func BenchmarkGet400(b *testing.B)     { benchmarkGet(b, 8, 5, false) }
 func BenchmarkGet25K(b *testing.B)     { benchmarkGet(b, 512, 5, false) }
 func BenchmarkGet50K(b *testing.B)     { benchmarkGet(b, 1024, 5, false) }
-func BenchmarkGet204K(b *testing.B)    { benchmarkGet(b, 4096, 5, false) }
+func BenchmarkGet204K(b *testing.B)    { benchmarkGet(b, 4096, 2, false) }
 func BenchmarkGet10M(b *testing.B)     { benchmarkGet(b, 200000, 5, false) }
-func BenchmarkAdd400(b *testing.B)     { benchmarkAdd(b, 512, 1000, false) }
-func BenchmarkAddBulk400(b *testing.B) { benchmarkBulkAdd(b, 8, 5, false) }
+func BenchmarkAdd25k(b *testing.B)     { benchmarkAdd(b, 100, 100, false) }
+func BenchmarkAddBulk25k(b *testing.B) { benchmarkBulkAdd(b, 100, 5, false) }
 func BenchmarkRemove6k(b *testing.B)   { benchmarkRemove(b, 128, 5, false) }
 
 func BenchmarkStringGet400(b *testing.B) { benchmarkGetString(b, 8) }
@@ -279,15 +279,13 @@ func makeOptions(replica uint, partitioning int, metrics bool) []Option {
 		opts = append(opts, WithListener(func(e Event, data ...any) {
 			switch e {
 			case EventFullRingLookup:
-				fmt.Printf("full ring: %x - block: %d\n", data...)
+				fmt.Printf("Full ring: %x - block: %d\n", data...)
 			case EventMissedLookupBlock:
-				fmt.Printf("missed: %x - block: %d\n", data...)
+				fmt.Printf("Missed: %x - block: %d - count: %d\n", data...)
 			case EventReBalance:
 				fmt.Printf("Rebalance: totalBlocks: %d, expectedBlocks: %d, blockSize: %d, totalKeys: %d\n", data...)
-			case EventReBalanceShift:
-				fmt.Printf("RebalanceShift: blockNumber: %d, targetBlock: %d, from: %d, to: %d, targetSize: %d\n", data...)
 			}
-		}, EventFullRingLookup, EventMissedLookupBlock, EventReBalance, EventReBalanceShift))
+		}, EventFullRingLookup, EventMissedLookupBlock, EventReBalance))
 	}
 	return opts
 }
