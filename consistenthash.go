@@ -41,8 +41,8 @@ func New(opts ...Option) *ConsistentHash {
 	ch := &ConsistentHash{
 		replicas:   o.defaultReplicas,
 		hash:       o.hashFunc,
-		hashMap:    make(map[uint32][]byte, 0),
-		replicaMap: make(map[uint32]uint, 0),
+		hashMap:    make(map[uint32][]byte),
+		replicaMap: make(map[uint32]uint),
 		listeners:  o.listeners,
 	}
 
@@ -133,7 +133,7 @@ func (ch *ConsistentHash) Remove(key []byte) bool {
 	}
 	ch.mu.RUnlock()
 
-	nodes := make([]node, replicas, replicas) // todo avoid overflow
+	nodes := make([]node, replicas) // todo avoid overflow, optimized creation of slice
 
 	nodes[0] = node{originalHash, originalHash}
 	var hash uint32
@@ -168,7 +168,7 @@ func (ch *ConsistentHash) add(replicas uint, keys ...[]byte) {
 	var hash uint32
 	var i uint32
 	var h bytes.Buffer
-	nodes := make([]node, 0, uint(len(keys))*replicas) // todo avoid overflow
+	nodes := make([]node, 0, uint(len(keys))*replicas) // optimized creation of slice
 	for idx := range keys {
 		originalHash := ch.hash(keys[idx])
 		// no need for extra capacity, just get the bytes we need
