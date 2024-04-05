@@ -173,7 +173,7 @@ func (ch *ConsistentHash) add(replicas uint, keys ...[]byte) {
 		originalHash := ch.hash(keys[idx])
 		// no need for extra capacity, just get the bytes we need
 		ch.mu.Lock()
-		ch.hashMap[originalHash] = keys[idx][:len(keys[idx]):len(keys[idx])]
+		ch.hashMap[originalHash] = keys[idx][:len(keys[idx]):len(keys[idx)]
 		ch.mu.Unlock()
 		nodes = append(nodes, node{originalHash, originalHash})
 		for i = 1; i < uint32(replicas); i++ {
