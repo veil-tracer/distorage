@@ -10,11 +10,5 @@ const (
 	EventFullRingLookup
 )
 
-func (ch *ConsistentHash) trigger(e Event, data ...any) {
-	if ch.listeners == nil {
-		return
-	}
-	for _, listener := range ch.listeners[e] {
-		listener(e, data...)
-	}
-}
+// Removed trigger function as it is marked unused and no implementation details specified for future use.
+
