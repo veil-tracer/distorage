@@ -1,5 +1,6 @@
 package distorage
 
+// options struct holds all the configurable options for the distributed storage
 type options struct {
 	hashFunc          HashFunc
 	listeners         map[Event][]EventListener
@@ -9,21 +10,21 @@ type options struct {
 
 type Option func(*options)
 
-// WithDefaultReplicas default number of replicas to add for each key
+// WithDefaultReplicas sets the default number of replicas to add for each key
 func WithDefaultReplicas(replicas uint) Option {
 	return func(o *options) {
 		o.defaultReplicas = replicas
 	}
 }
 
-// WithHashFunc hash function for 32bit CH
+// WithHashFunc sets the hash function for consistent hashing
 func WithHashFunc(hashFunc HashFunc) Option {
 	return func(o *options) {
 		o.hashFunc = hashFunc
 	}
 }
 
-// WithListener attach a listener to the event
+// WithListener attaches an event listener to the specified event(s)
 func WithListener(listener EventListener, e ...Event) Option {
 	return func(o *options) {
 		if o.listeners == nil {
@@ -35,7 +36,7 @@ func WithListener(listener EventListener, e ...Event) Option {
 	}
 }
 
-// WithBlockPartitioning uses block partitioning, divides total number of keys to the given number to get number of blocks
+// WithBlockPartitioning enables block partitioning by dividing keys into specified number of blocks
 func WithBlockPartitioning(divisionBy int) Option {
 	return func(o *options) {
 		o.blockPartitioning = divisionBy
