@@ -1,7 +1,9 @@
 package distorage
 
+// Event represents an event type
 type Event uint8
 
+// EventListener represents a function type for event listeners
 type EventListener func(e Event, data ...any)
 
 const (
