@@ -297,3 +297,4 @@ func makeOptions(replica uint, partitioning int, metrics bool) []Option {
 	}
 	return opts
 }
+
