@@ -163,8 +163,8 @@ func TestConsistency(t *testing.T) {
 		hash1.GetString("Bonny") != hash2.GetString("Bonny") {
 		t.Errorf("direct matches should always return the same entry")
 	}
-
 }
+
 func BenchmarkConcurrent(b *testing.B) { benchmarkConcurrent(b, 10000, 5, false) }
 
 func BenchmarkGet400(b *testing.B)     { benchmarkGet(b, 8, 5, false) }
@@ -187,7 +187,7 @@ func benchmarkGetString(b *testing.B, shards int) {
 	var lookups []string
 	for i := 0; i < shards; i++ {
 		buckets = append(buckets, fmt.Sprintf("shard-%d", i))
-		hash.Add([]byte(fmt.Sprintf("shard-%d", i)))
+		hash.Add([]byte(fmt.Sprintf("shard-%d", i))
 		lookups = append(lookups, fmt.Sprintf("shard-x-%d", i))
 	}
 	b.ResetTimer()
