@@ -302,7 +302,7 @@ func (ch *ConsistentHash) removeFromBlock(hash, originalHash uint32) {
 }
 
 // lookup finds the block number and value of the given hash
-function (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
+func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 	// block size is equal to hkeys
 	// binary search for appropriate replica
 	blockSize := math.MaxUint32 / ch.totalBlocks
