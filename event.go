@@ -1,11 +1,13 @@
 package distorage
 
+// Event represents the type of event in the system.
 type Event uint8
 
+// EventListener defines the function signature for event listeners.
 type EventListener func(e Event, data ...any)
 
 const (
-	EventReBalance Event = 1 << iota
+	EventReBalance      Event = 1 << iota
 	EventMissedLookup
 	EventFullRingLookup
 )
