@@ -6,6 +6,7 @@ type Event uint8
 // EventListener is a function type that listens for specific events
 type EventListener func(e Event, data ...any)
 
+// EventReBalance is an event triggered when rebalancing occurs
 const (
 	EventReBalance Event = 1 << iota
 	EventMissedLookup
