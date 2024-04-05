@@ -258,7 +258,6 @@ func (ch *ConsistentHash) balanceBlocks(expectedBlocks uint32) {
 				newBlockMap[targetBlock] = append(newBlockMap[targetBlock], make([]node, i-j)...)
 				copy(newBlockMap[targetBlock][i-j:], newBlockMap[targetBlock])
 				copy(newBlockMap[targetBlock][:i-j], nodes[j:i-1])
-				// newBlockMap[targetBlock] = append(nodes[j:i-1], newBlockMap[targetBlock]...)
 
 				i = j
 			}
@@ -300,11 +299,10 @@ func (ch *ConsistentHash) removeFromBlock(hash, originalHash uint32) {
 	if originalHash == hash {
 		delete(ch.hashMap, originalHash)
 	}
-	return
 }
 
 // lookup finds the block number and value of the given hash
-func (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
+function (ch *ConsistentHash) lookup(hash uint32) ([]byte, uint32) {
 	// block size is equal to hkeys
 	// binary search for appropriate replica
 	blockSize := math.MaxUint32 / ch.totalBlocks
