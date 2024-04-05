@@ -41,8 +41,8 @@ func New(opts ...Option) *ConsistentHash {
 	ch := &ConsistentHash{
 		replicas:   o.defaultReplicas,
 		hash:       o.hashFunc,
-		hashMap:    make(map[uint32][]byte, 0),
-		replicaMap: make(map[uint32]uint, 0),
+		hashMap:    make(map[uint32][]byte),
+		replicaMap: make(map[uint32]uint),
 		listeners:  o.listeners,
 	}
 
@@ -60,7 +60,7 @@ func New(opts ...Option) *ConsistentHash {
 
 	ch.blockPartitioning = uint32(o.blockPartitioning)
 	ch.blockMap = make(map[uint32][]node, ch.blockPartitioning)
-	ch.pool = sync.Pool{New: func() any { return make(map[uint32][]node, o.blockPartitioning) }}
+	ch.pool = sync.Pool{New: func() interface{} { return make(map[uint32][]node, o.blockPartitioning) }}
 	ch.totalBlocks = 1
 
 	return ch
@@ -133,7 +133,7 @@ func (ch *ConsistentHash) Remove(key []byte) bool {
 	}
 	ch.mu.RUnlock()
 
-	nodes := make([]node, replicas, replicas) // todo avoid overflow
+	nodes := make([]node, replicas) // todo avoid overflow
 
 	nodes[0] = node{originalHash, originalHash}
 	var hash uint32
@@ -173,7 +173,7 @@ func (ch *ConsistentHash) add(replicas uint, keys ...[]byte) {
 		originalHash := ch.hash(keys[idx])
 		// no need for extra capacity, just get the bytes we need
 		ch.mu.Lock()
-		ch.hashMap[originalHash] = keys[idx][:len(keys[idx]):len(keys[idx])]
+		ch.hashMap[originalHash] = keys[idx][:len(keys[idx]):len(keys[idx])
 		ch.mu.Unlock()
 		nodes = append(nodes, node{originalHash, originalHash})
 		for i = 1; i < uint32(replicas); i++ {
