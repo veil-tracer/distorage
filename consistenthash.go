@@ -23,7 +23,7 @@ type ConsistentHash struct {
 	hash              HashFunc
 	pool              sync.Pool
 	replicas          uint              // default number of replicas in hash ring (higher number means more possibility for balance equality)
-	hashMap           map[uint32][]byte // Hash table key value pair (hash(x): x) * replicas (nodes)
+	hashMap           []byte            // Hash table to store key value pair (hash(x): x) * replicas (nodes)
 	replicaMap        map[uint32]uint   // Number of replicas per stored key
 	blockMap          map[uint32][]node // fixed size blocks in the circle each might contain a list of keys
 	listeners         map[Event][]EventListener
@@ -41,7 +41,7 @@ func New(opts ...Option) *ConsistentHash {
 	ch := &ConsistentHash{
 		replicas:   o.defaultReplicas,
 		hash:       o.hashFunc,
-		hashMap:    make(map[uint32][]byte, 0),
+		hashMap:    make([]byte, 0),
 		replicaMap: make(map[uint32]uint, 0),
 		listeners:  o.listeners,
 	}
