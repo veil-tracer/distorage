@@ -1,1 +1,1 @@
-package consistenthash
+package distorage
